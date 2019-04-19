@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch.distributions import Normal, kl_divergence as kl
 
 from scvi.models.log_likelihood import log_zinb_positive, log_nb_positive
-from scvi.models.modules import Encoder, DecoderSCVI
+from scvi.models.modules import Encoder, DecoderSCVI, ActivationDecoderSCVI
 from scvi.models.utils import one_hot
 
 torch.backends.cudnn.benchmark = True
@@ -214,3 +214,20 @@ class VAE(nn.Module):
         reconst_loss = self._reconstruction_loss(x, px_rate, px_r, px_dropout)
 
         return reconst_loss + kl_divergence_l, kl_divergence
+
+
+class ActivationVAE(VAE):
+    r""" VAE with activation regression as decoder.
+    For ERTF analysis.
+    """
+    def __init__(self, n_input: int, n_batch: int = 0, n_labels: int = 0,
+                 n_hidden: int = 128, n_layers: int = 1,
+                 dropout_rate: float = 0.1, dispersion: str = "gene",
+                 log_variational: bool = True, reconstruction_loss: str = "nb"):
+        n_latent = 1  # This should be only reasonable option?
+        super().__init__(n_input, n_batch, n_labels, n_hidden, n_latent, n_layers,
+                         dropout_rate, dispersion, log_variational, reconstruction_loss)
+
+        self.decoder = ActivationDecoderSCVI(n_latent, n_input, n_cat_list=[n_batch],
+                                             n_layers=n_layers, n_hidden=n_hidden)
+

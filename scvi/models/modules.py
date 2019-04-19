@@ -189,6 +189,30 @@ class DecoderSCVI(nn.Module):
         return px_scale, px_r, px_rate, px_dropout
 
 
+class ActivationDecoderSCVI(nn.Module):
+    def __init__(self, n_input: int, n_output: int,
+                 n_cat_list: Iterable[int] = None, n_layers: int = 1,
+                 n_hidden: int = 128):
+        super(ActivationDecoderSCVI, self).__init__()
+
+        self.regressor = nn.Sequential(nn.Softplus(), nn.Linear(n_input, n_output))
+
+        self.px_dropout_decoder = nn.Linear(n_input, n_output)
+
+    def forward(self, dispersion: str, z: torch.Tensor, library: torch.Tensor, *cat_list: int):
+
+        p_ = self.regressor(z)
+        raw_px_scale = p_
+
+        px_scale = torch.softmax(raw_px_scale, dim=-1)
+        px_dropout = self.px_dropout_decoder(z)
+        px_rate = torch.exp(library) * px_scale
+        px_r = None
+
+        return px_scale, px_r, px_rate, px_dropout
+
+
+
 # Decoder
 class Decoder(nn.Module):
     r"""Decodes data from latent space of ``n_input`` dimensions to ``n_output``
