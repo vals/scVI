@@ -62,3 +62,6 @@ class CAVI(nn.Module):
             n_hidden=n_hidden,
             dropout_rate=dropout_rate
         )
+
+        # decoder goes from n_latent-dimensional space to n_labels probabilites
+        

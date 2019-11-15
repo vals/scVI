@@ -258,6 +258,40 @@ class DecoderSCVI(nn.Module):
         return px_scale, px_r, px_rate, px_dropout
 
 
+# Decoder
+class DecoderCAVI(nn.Module):
+    r"""Decodes data to cell type probabilities.
+    """
+    def __init__(
+        self,
+        n_input: int,
+        n_labels: int,
+        n_layers: int = 1,
+        n_hidden: int = 128
+    ):
+        super().__init__()
+        self.ppi_decoder = FCLayers(
+            n_in=n_input,
+            n_out=n_hidden,
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            dropout_rate=0,
+        )
+
+        # final step
+        self.ppi_scale_decoder = nn.Sequential(
+            nn.Linear(n_hidden, n_labels), nn.Softmax(dim=-1)
+        )
+
+    def forward(
+        self,
+        z: torch.Tensor
+    ):
+        ppi = self.ppi_decoder(z)
+        ppi_scale = self.ppi_scale_decoder(ppi)
+
+        return ppi_scale
+
 class LinearDecoderSCVI(nn.Module):
     def __init__(
         self,
