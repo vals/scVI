@@ -83,7 +83,14 @@ class CAVI(nn.Module):
         # Base expression
         self.beta = torch.nn.Parameter(torch.randn(n_input_genes))
 
-    def inference(self, x, n_samples=1):
+    def get_reconstruction_loss(self, x, px_rate, px_r, px_dropout, **kwargs):
+        ppi_scale = px_dropout  # Yes this is a terrible hack
+        nll = -log_nb_positive(x[:, :, None], px_rate, px_r[None, :, None])
+        reconst_loss = (ppi_scale[:, None, :] * nll)  # .sum(dim=(1,2))
+
+        return reconst_loss
+    
+    def inference(self, x, batch_index=None, y=None, n_samples=1):
 
         x_ = x
         if self.log_variational:
@@ -110,6 +117,7 @@ class CAVI(nn.Module):
             px_scale=px_scale,
             px_r=px_r,
             px_rate=px_rate,
+            px_dropout=ppi_scale,  # Nota bene
             ppi_scale=ppi_scale,
             qz_m=qz_m,
             qz_v=qz_v,
@@ -118,7 +126,7 @@ class CAVI(nn.Module):
             library=library
         )
 
-    def forward(self, x, local_l_mean, local_l_var):
+    def forward(self, x, local_l_mean, local_l_var, batch_index=None, y=None):
         r''' Return reconstruction loss and KL divergences
         '''
         outputs = self.inference(x)
@@ -135,15 +143,18 @@ class CAVI(nn.Module):
         scale = torch.ones_like(qz_v)
 
         kl_divergence_z = kl(Normal(qz_m, torch.sqrt(qz_v)), Normal(mean, scale)).sum(
-            dim=1
+            # dim=1
         )
         kl_divergence_l = kl(
             Normal(ql_m, torch.sqrt(ql_v)),
             Normal(local_l_mean, torch.sqrt(local_l_var)),
-        ).sum(dim=1)
+        ).sum(
+            # dim=1
+        )
         kl_divergence = kl_divergence_z
 
-        nll = -log_nb_positive(x[:, :, None], px_rate, px_r[None, :, None])
-        reconst_loss = (ppi_scale[:, None, :] * nll).sum()
+        reconst_loss = self.get_reconstruction_loss(x, px_rate, px_r, ppi_scale).sum(
+
+        )
 
         return reconst_loss + kl_divergence_l, kl_divergence, 0.0

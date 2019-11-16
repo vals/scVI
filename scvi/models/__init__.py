@@ -5,6 +5,7 @@ from .autozivae import AutoZIVAE
 from .vaec import VAEC
 from .jvae import JVAE
 from .totalvi import TOTALVI
+from .cavi import CAVI
 
 __all__ = [
     "SCANVI",
@@ -15,4 +16,5 @@ __all__ = [
     "Classifier",
     "AutoZIVAE",
     "TOTALVI",
+    "CAVI"
 ]
