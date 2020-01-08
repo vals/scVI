@@ -3,6 +3,7 @@ from typing import Iterable, List
 
 import torch
 from torch import nn as nn
+from torch.nn import functional as F
 from torch.distributions import Normal
 from torch.nn import ModuleList
 
@@ -270,6 +271,7 @@ class DecoderSCVI(nn.Module):
         return px_scale, px_r, px_rate, px_dropout
 
 
+# Decoder
 class LinearDecoderSCVI(nn.Module):
     def __init__(
         self,
@@ -312,6 +314,40 @@ class LinearDecoderSCVI(nn.Module):
         raw_px_scale = self.factor_regressor(z, *cat_list)
         px_scale = torch.softmax(raw_px_scale, dim=-1)
         px_dropout = self.px_dropout_decoder(z, *cat_list)
+        px_rate = torch.exp(library) * px_scale
+        px_r = None
+
+        return px_scale, px_r, px_rate, px_dropout
+
+
+# Decoder
+class PathwayDecoderSCVI(nn.Module):
+    def __init__(
+        self,
+        n_input: int,
+        n_output: int,
+        C: torch.tensor,  # Censoring matrix, links weights to pathways.
+        n_cat_list: Iterable[int] = None,
+        use_batch_norm: bool = True,
+        bias: bool = False,
+    ):
+        super(PathwayDecoderSCVI, self).__init__()
+
+        self.C = C
+        self.W = nn.Parameter(torch.Tensor(n_input, n_output))
+        self.b = nn.Parameter(torch.Tensor(n_output))
+
+    def forward(
+        self,
+        dispersion: str,
+        z: torch.Tensor,
+        library: torch.Tensor,
+        *cat_list: int
+    ):
+        # The decoder returns values for the parameters of the ZINB distribution
+        raw_px_scale = torch.matmul(z, F.softplus(self.W) * self.C) + self.b
+        px_scale = torch.softmax(raw_px_scale, dim=-1)
+        px_dropout = None  # Let's not worry about this yet.
         px_rate = torch.exp(library) * px_scale
         px_r = None
 

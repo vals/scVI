@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch.distributions import Normal, Poisson, kl_divergence as kl
 
 from scvi.models.log_likelihood import log_zinb_positive, log_nb_positive
-from scvi.models.modules import Encoder, DecoderSCVI, LinearDecoderSCVI
+from scvi.models.modules import Encoder, DecoderSCVI, LinearDecoderSCVI, PathwayDecoderSCVI
 from scvi.models.utils import one_hot
 
 torch.backends.cudnn.benchmark = True
@@ -397,3 +397,56 @@ class LDVAE(VAE):
             loadings = loadings[:, : -self.n_batch]
 
         return loadings
+
+
+class PFVI(VAE):
+    r"""Latent pathway activity model
+    """
+    def __init__(
+        self,
+        n_input: int,
+        C: torch.Tensor
+        n_batch: int = 0,
+        n_labels: int = 0,
+        n_hidden: int = 128,
+        n_latent: int = 10,
+        n_layers_encoder: int = 1,
+        dropout_rate: float = 0.1,
+        dispersion: str = "gene",
+        log_variational: bool = True,
+        reconstruction_loss: str = "nb",
+        use_batch_norm: bool = True,
+        bias: bool = False,
+        latent_distribution: str = "normal",
+    ):
+        super().__init__(
+            n_input,
+            n_batch,
+            n_labels,
+            n_hidden,
+            n_latent,
+            n_layers_encoder,
+            dropout_rate,
+            dispersion,
+            log_variational,
+            reconstruction_loss,
+            latent_distribution,
+        )
+        self.use_batch_norm = use_batch_norm
+        self.z_encoder = Encoder(
+            n_input,
+            n_latent,
+            n_layers=n_layers_encoder,
+            n_hidden=n_hidden,
+            dropout_rate=dropout_rate,
+            distribution=latent_distribution,
+        )
+
+        self.decoder = PathwayDecoderSCVI(
+            n_latent,
+            n_input,
+            C,
+            n_cat_list=[n_batch],
+            use_batch_norm=use_batch_norm,
+            bias=bias,
+        )
