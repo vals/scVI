@@ -405,7 +405,7 @@ class PFVI(VAE):
     def __init__(
         self,
         n_input: int,
-        C: torch.Tensor
+        C: torch.Tensor,
         n_batch: int = 0,
         n_labels: int = 0,
         n_hidden: int = 128,
@@ -417,7 +417,7 @@ class PFVI(VAE):
         reconstruction_loss: str = "nb",
         use_batch_norm: bool = True,
         bias: bool = False,
-        latent_distribution: str = "normal",
+        latent_distribution: str = "ln",  # "ln" makes sense for pathways
     ):
         super().__init__(
             n_input,
