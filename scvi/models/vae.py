@@ -206,7 +206,7 @@ class VAE(nn.Module):
             reconst_loss = -Poisson(px_rate).log_prob(x).sum(dim=-1)
         return reconst_loss
 
-    def inference(self, x, batch_index=None, y=None, n_samples=1, transform_batch=None):
+    def inference(self, x, batch_index=None, y=None, n_samples=1, transform_batch=None, get_conditional=False):
 
         x_ = x
         if self.log_variational:
@@ -234,17 +234,25 @@ class VAE(nn.Module):
         px_scale, px_r, px_rate, px_dropout = self.decoder(
             self.dispersion, z, library, dec_batch_index, y
         )
+        if get_conditional:
+            px_conditional = self.decoder.px_decoder(
+                z, dec_batch_index, y
+            )
+
         if self.dispersion == "gene-label":
             px_r = F.linear(
                 one_hot(y, self.n_labels), self.px_r
             )  # px_r gets transposed - last dimension is nb genes
+        
         elif self.dispersion == "gene-batch":
             px_r = F.linear(one_hot(dec_batch_index, self.n_batch), self.px_r)
+        
         elif self.dispersion == "gene":
             px_r = self.px_r
+        
         px_r = torch.exp(px_r)
 
-        return dict(
+        return_dict =  dict(
             px_scale=px_scale,
             px_r=px_r,
             px_rate=px_rate,
@@ -256,6 +264,11 @@ class VAE(nn.Module):
             ql_v=ql_v,
             library=library,
         )
+
+        if get_conditional:
+            return_dict['px_conditional'] = px_conditional
+
+        return return_dict
 
     def forward(self, x, local_l_mean, local_l_var, batch_index=None, y=None):
         r""" Returns the reconstruction loss and the Kullback divergences
