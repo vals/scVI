@@ -1298,6 +1298,104 @@ class Posterior:
             )
         return de_res, de_cluster
 
+    def DE_change_delta(
+        self,
+        idx1: Union[List[bool], np.ndarray],
+        idx2: Union[List[bool], np.ndarray],
+        idx3: Union[List[bool], np.ndarray],
+        idx4: Union[List[bool], np.ndarray],
+        n_samples: int = 5000,
+        cred_interval_lvls: Optional[Union[List[float], np.ndarray]] = N,
+        **kwargs
+    ) -> Dict[str, np.ndarray]:
+        r"""A method for comparing differential (e.g. due to treatment) between two
+        experimental conditions (e.g. due to experimental conditions).
+
+        .. math::
+            f_1 = h_12 - h_11
+        
+        .. math::
+            f_2 = h_22 - h_21
+        
+        .. math::
+            delta = f_2 - f_1
+
+        Similar to the 'change' mode in differential expresion, delta is considered
+        a random variable and Bayesian hypothesis testing is used to test the variable.
+
+
+        Returns
+        -------
+        Differential expression delta properties
+        """
+        if not np.array_equal(self.indices, np.arange(len(self.gene_dataset))):
+            logger.warning(
+                "Differential expression requires a Posterior object created with all indices."
+            )
+        
+        eps = 1e-8  # used for numerical stability
+
+        ## TODO: Deal with batches.
+
+        # Normalized means sampling for both populations
+        scales_batches_1 = self.scale_sampler(
+            selection=idx1,
+            n_samples=n_samples,
+            **kwargs,
+        )
+        scales_batches_2 = self.scale_sampler(
+            selection=idx2,
+            n_samples=n_samples,
+            **kwargs,
+        )
+        scales_batches_3 = self.scale_sampler(
+            selection=idx2,
+            n_samples=n_samples,
+            **kwargs,
+        )
+        scales_batches_4 = self.scale_sampler(
+            selection=idx2,
+            n_samples=n_samples,
+            **kwargs,
+        )
+
+        def lfc_delta(x11, x12, x21, x22):
+            return np.log2(x22) - np.log2(x21) - (np.log2(x12) - np.log2(x11))
+        
+        delta_delta = 0.01
+
+        def m1_domain_fn(samples):
+            return np.abs(samples) >= delta_delta
+
+        lfc_delta_specs = inspect.getfullargspec(lfc_delta)
+        domain_fn_specs = inspect.getfullargspec(m1_domain_fn)
+
+        lfc_delta_distribution = lfc_delta(
+            scales_batches_1,
+            scales_batches_2,
+            scales_batches_3,
+            scales_batches_4
+        )
+        is_de_delta = m1_domain_fn(lfc_delta_distribution)
+        proba_delta = np.mean(is_de_delta, 0)
+        delta_distribution_probs = describe_continuous_distrib(
+            samples=lfc_delta_distribution,
+            credible_intervals_levels=cred_interval_lvls
+        )
+        delta_distribution_probs = {
+            "delta_" + key: val for (key, val) in delta_distribution_probs.items()
+        }
+
+        res = dict(
+            proba_delta=proba_delta,
+            proba_not_delta=1.0 - proba_delta,
+            bayes_factor=np.log(proba_delta + eps) - np.log(1.0 - proba_delta + eps),
+            **delta_distribution_probs
+        )
+
+        return res
+
+    
     @torch.no_grad()
     def imputation(
         self,
