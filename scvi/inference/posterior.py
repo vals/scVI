@@ -1300,16 +1300,17 @@ class Posterior:
 
     def DE_change_delta(
         self,
-        idx1: Union[List[bool], np.ndarray],
-        idx2: Union[List[bool], np.ndarray],
-        idx3: Union[List[bool], np.ndarray],
-        idx4: Union[List[bool], np.ndarray],
+        idx11: Union[List[bool], np.ndarray],
+        idx12: Union[List[bool], np.ndarray],
+        idx21: Union[List[bool], np.ndarray],
+        idx22: Union[List[bool], np.ndarray],
         n_samples: int = 5000,
-        cred_interval_lvls: Optional[Union[List[float], np.ndarray]] = N,
+        delta_delta: Optional[float] = 0.1,
+        cred_interval_lvls: Optional[Union[List[float], np.ndarray]] = None,
         **kwargs
     ) -> Dict[str, np.ndarray]:
-        r"""A method for comparing differential (e.g. due to treatment) between two
-        experimental conditions (e.g. due to experimental conditions).
+        r"""A method for comparing differential expression (e.g. due to treatment)
+        between two experimental conditions (e.g. due to experimental conditions).
 
         .. math::
             f_1 = h_12 - h_11
@@ -1338,43 +1339,41 @@ class Posterior:
         ## TODO: Deal with batches.
 
         # Normalized means sampling for both populations
-        scales_batches_1 = self.scale_sampler(
-            selection=idx1,
+        scales_batches_11 = self.scale_sampler(
+            selection=idx11,
             n_samples=n_samples,
             **kwargs,
         )
-        scales_batches_2 = self.scale_sampler(
-            selection=idx2,
+        scales_batches_12 = self.scale_sampler(
+            selection=idx12,
             n_samples=n_samples,
             **kwargs,
         )
-        scales_batches_3 = self.scale_sampler(
-            selection=idx2,
+        scales_batches_21 = self.scale_sampler(
+            selection=idx21,
             n_samples=n_samples,
             **kwargs,
         )
-        scales_batches_4 = self.scale_sampler(
-            selection=idx2,
+        scales_batches_22 = self.scale_sampler(
+            selection=idx22,
             n_samples=n_samples,
             **kwargs,
         )
 
         def lfc_delta(x11, x12, x21, x22):
             return np.log2(x22) - np.log2(x21) - (np.log2(x12) - np.log2(x11))
-        
-        delta_delta = 0.01
 
         def m1_domain_fn(samples):
-            return np.abs(samples) >= delta_delta
+            return samples >= delta_delta
 
         lfc_delta_specs = inspect.getfullargspec(lfc_delta)
         domain_fn_specs = inspect.getfullargspec(m1_domain_fn)
 
         lfc_delta_distribution = lfc_delta(
-            scales_batches_1,
-            scales_batches_2,
-            scales_batches_3,
-            scales_batches_4
+            scales_batches_11['scale'],
+            scales_batches_12['scale'],
+            scales_batches_21['scale'],
+            scales_batches_22['scale']
         )
         is_de_delta = m1_domain_fn(lfc_delta_distribution)
         proba_delta = np.mean(is_de_delta, 0)
@@ -1393,9 +1392,14 @@ class Posterior:
             **delta_distribution_probs
         )
 
+        gene_names = self.gene_dataset.gene_names
+
+        res = pd.DataFrame(res, index=gene_names)
+        sort_key = 'proba_delta'
+        res = res.sort_values(by=sort_key, ascending=False)
+
         return res
 
-    
     @torch.no_grad()
     def imputation(
         self,
