@@ -381,3 +381,23 @@ def _validate_adata_dataloader_input(
     ):
         raise ValueError("`dataloader` must be provided.")
     return
+
+
+def make_pseudobulk_batches(adata: AnnData, batch_key: str) -> AnnData:
+    """Aggregate counts per batch key to create pseudobulk observations."""
+    batch_categories = adata.obs[batch_key].astype(str)
+    uniq = batch_categories.unique()
+
+    pb_data = []
+    for cat in uniq:
+        idx = batch_categories == cat
+        x = adata[idx].X
+        counts = x.sum(axis=0)
+        if sp_sparse.issparse(counts):
+            counts = np.asarray(counts).ravel()
+        pb_data.append(counts)
+
+    pb_data = np.stack(pb_data, axis=0)
+    pb_adata = AnnData(pb_data, obs=pd.DataFrame({batch_key: uniq}))
+    pb_adata.var_names = adata.var_names.copy()
+    return pb_adata

@@ -163,7 +163,8 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         latent_distribution: Literal["normal", "ln"] = "normal",
         encode_covariates: bool = False,
         deeply_inject_covariates: bool = True,
-        batch_representation: Literal["one-hot", "embedding"] = "one-hot",
+        batch_representation: Literal["one-hot", "embedding", "variational"] = "one-hot",
+        pseudobulk_counts: np.ndarray | None = None,
         use_batch_norm: Literal["encoder", "decoder", "none", "both"] = "both",
         use_layer_norm: Literal["encoder", "decoder", "none", "both"] = "none",
         use_size_factor_key: bool = False,
@@ -216,16 +217,40 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
             )
 
         self.batch_representation = batch_representation
-        if self.batch_representation == "embedding":
-            self.init_embedding(REGISTRY_KEYS.BATCH_KEY, n_batch, **(batch_embedding_kwargs or {}))
-            batch_dim = self.get_embedding(REGISTRY_KEYS.BATCH_KEY).embedding_dim
-        elif self.batch_representation != "one-hot":
-            raise ValueError("`batch_representation` must be one of 'one-hot', 'embedding'.")
 
         use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
         use_batch_norm_decoder = use_batch_norm == "decoder" or use_batch_norm == "both"
         use_layer_norm_encoder = use_layer_norm == "encoder" or use_layer_norm == "both"
         use_layer_norm_decoder = use_layer_norm == "decoder" or use_layer_norm == "both"
+
+        if self.batch_representation == "embedding":
+            self.init_embedding(REGISTRY_KEYS.BATCH_KEY, n_batch, **(batch_embedding_kwargs or {}))
+            batch_dim = self.get_embedding(REGISTRY_KEYS.BATCH_KEY).embedding_dim
+        elif self.batch_representation == "variational":
+            if pseudobulk_counts is None:
+                raise ValueError(
+                    "`pseudobulk_counts` must be provided when using variational "
+                    "batch representation."
+                )
+            self.register_buffer("pseudobulk_counts", torch.as_tensor(pseudobulk_counts).float())
+            self.batch_encoder = Encoder(
+                n_input,
+                n_latent,
+                n_layers=n_layers,
+                n_hidden=n_hidden,
+                dropout_rate=dropout_rate,
+                distribution="normal",
+                inject_covariates=False,
+                use_batch_norm=use_batch_norm_encoder,
+                use_layer_norm=use_layer_norm_encoder,
+                var_activation=var_activation,
+                return_dist=True,
+            )
+            batch_dim = n_latent
+        elif self.batch_representation != "one-hot":
+            raise ValueError(
+                "`batch_representation` must be one of 'one-hot', 'embedding', 'variational'."
+            )
 
         n_input_encoder = n_input + n_continuous_cov * encode_covariates
         if self.batch_representation == "embedding":
@@ -267,7 +292,7 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
             **_extra_encoder_kwargs,
         )
         n_input_decoder = n_latent + n_continuous_cov
-        if self.batch_representation == "embedding":
+        if self.batch_representation in {"embedding", "variational"}:
             n_input_decoder += batch_dim
 
         _extra_decoder_kwargs = extra_decoder_kwargs or {}
@@ -496,6 +521,21 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
                 *categorical_input,
                 y,
             )
+            qb_loc = qb_var = batch_latent = None
+        elif self.batch_representation == "variational":
+            qb, _ = self.batch_encoder(self.pseudobulk_counts)
+            batch_latent = self.batch_encoder.z_transformation(qb.rsample())
+            batch_rep = batch_latent[batch_index.squeeze(-1)]
+            decoder_input = torch.cat([decoder_input, batch_rep], dim=-1)
+            px_scale, px_r, px_rate, px_dropout = self.decoder(
+                self.dispersion,
+                decoder_input,
+                size_factor,
+                *categorical_input,
+                y,
+            )
+            qb_loc = qb.loc
+            qb_var = qb.scale**2
         else:
             px_scale, px_r, px_rate, px_dropout = self.decoder(
                 self.dispersion,
@@ -505,6 +545,7 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
                 *categorical_input,
                 y,
             )
+            qb_loc = qb_var = batch_latent = None
 
         if self.dispersion == "gene-label":
             px_r = linear(
@@ -542,11 +583,16 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
             pl = Normal(local_library_log_means, local_library_log_vars.sqrt())
         pz = Normal(torch.zeros_like(z), torch.ones_like(z))
 
-        return {
+        out = {
             MODULE_KEYS.PX_KEY: px,
             MODULE_KEYS.PL_KEY: pl,
             MODULE_KEYS.PZ_KEY: pz,
         }
+        if qb_loc is not None:
+            out[MODULE_KEYS.QBM_KEY] = qb_loc
+            out[MODULE_KEYS.QBV_KEY] = qb_var
+            out[MODULE_KEYS.BATCH_EMBED_KEY] = batch_latent
+        return out
 
     @unsupported_if_adata_minified
     def loss(

@@ -13,7 +13,7 @@ from scipy.sparse import csr_matrix
 from torch.nn import Softplus
 
 import scvi
-from scvi.data import _constants, synthetic_iid
+from scvi.data import _constants, make_pseudobulk_batches, synthetic_iid
 from scvi.data._compat import LEGACY_REGISTRY_KEY_MAP, registry_from_setup_dict
 from scvi.data._download import _download
 from scvi.model import SCVI
@@ -1322,3 +1322,17 @@ def test_scvi_num_workers():
     model.get_reconstruction_error()
     model.get_normalized_expression(transform_batch="batch_1")
     model.get_normalized_expression(n_samples=2)
+
+
+def test_variational_batch_representation():
+    adata = synthetic_iid()
+    SCVI.setup_anndata(adata, batch_key="batch")
+    pb = make_pseudobulk_batches(adata, "batch")
+    model = SCVI(
+        adata,
+        batch_representation="variational",
+        pseudobulk_adata=pb,
+    )
+    model.train(max_epochs=1, train_size=0.5)
+    rep = model.get_batch_representation()
+    assert rep.shape == (adata.n_obs, model.module.n_latent)

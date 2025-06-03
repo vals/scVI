@@ -30,12 +30,29 @@ class EmbeddingMixin:
         batch_size: int | None = None,
     ) -> np.ndarray:
         """Get the batch representation for a given set of indices."""
-        if not isinstance(self.module, EmbeddingModuleMixin):
-            raise ValueError("The current `module` must inherit from `EmbeddingModuleMixin`.")
+        if isinstance(self.module, EmbeddingModuleMixin):
+            adata = self._validate_anndata(adata)
+            dataloader = self._make_data_loader(
+                adata=adata, indices=indices, batch_size=batch_size
+            )
+            key = REGISTRY_KEYS.BATCH_KEY
+            tensors = [self.module.compute_embedding(key, tensors[key]) for tensors in dataloader]
+            return torch.cat(tensors).detach().cpu().numpy()
 
-        adata = self._validate_anndata(adata)
-        dataloader = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
+        if getattr(self.module, "batch_representation", None) == "variational":
+            adata = self._validate_anndata(adata)
+            dataloader = self._make_data_loader(
+                adata=adata, indices=indices, batch_size=batch_size
+            )
+            qb, _ = self.module.batch_encoder(self.module.pseudobulk_counts)
+            batch_latent = self.module.batch_encoder.z_transformation(qb.rsample())
+            reps = [
+                batch_latent[tensors[REGISTRY_KEYS.BATCH_KEY].squeeze(-1)]
+                for tensors in dataloader
+            ]
+            return torch.cat(reps).detach().cpu().numpy()
 
-        key = REGISTRY_KEYS.BATCH_KEY
-        tensors = [self.module.compute_embedding(key, tensors[key]) for tensors in dataloader]
-        return torch.cat(tensors).detach().cpu().numpy()
+        raise ValueError(
+            "The current `module` must inherit from `EmbeddingModuleMixin` or use variational "
+            "batch representation."
+        )

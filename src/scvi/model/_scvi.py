@@ -4,10 +4,13 @@ import logging
 import warnings
 from typing import TYPE_CHECKING
 
+import numpy as np
+import scipy.sparse as sp_sparse
+
 from scvi import REGISTRY_KEYS, settings
 from scvi.data import AnnDataManager
 from scvi.data._constants import ADATA_MINIFY_TYPE
-from scvi.data._utils import _get_adata_minify_type
+from scvi.data._utils import _get_adata_minify_type, make_pseudobulk_batches
 from scvi.data.fields import (
     CategoricalJointObsField,
     CategoricalObsField,
@@ -124,6 +127,8 @@ class SCVI(
         gene_likelihood: Literal["zinb", "nb", "poisson", "normal"] = "zinb",
         use_observed_lib_size: bool = True,
         latent_distribution: Literal["normal", "ln"] = "normal",
+        pseudobulk_adata: AnnData | None = None,
+        compute_pseudobulk: bool = False,
         **kwargs,
     ):
         super().__init__(adata, registry)
@@ -193,6 +198,21 @@ class SCVI(
                 library_log_means, library_log_vars = _init_library_size(
                     self.adata_manager, n_batch
                 )
+
+            if self._module_kwargs.get("batch_representation") == "variational":
+                if pseudobulk_adata is None and compute_pseudobulk:
+                    batch_key = self.adata_manager.get_state_registry(REGISTRY_KEYS.BATCH_KEY)[
+                        "original_key"
+                    ]
+                    pseudobulk_adata = make_pseudobulk_batches(self.adata, batch_key)
+                if pseudobulk_adata is not None:
+                    pb_counts = pseudobulk_adata.X
+                    if sp_sparse.issparse(pb_counts):
+                        pb_counts = pb_counts.A
+                    self._module_kwargs["pseudobulk_counts"] = np.asarray(
+                        pb_counts, dtype=np.float32
+                    )
+
             self.module = self._module_cls(
                 n_input=self.summary_stats.n_vars,
                 n_batch=n_batch,
