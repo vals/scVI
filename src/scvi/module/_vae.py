@@ -603,7 +603,7 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         kl_weight: torch.tensor | float = 1.0,
     ) -> LossOutput:
         """Compute the loss."""
-        from torch.distributions import kl_divergence
+        from torch.distributions import Normal, kl_divergence
 
         x = tensors[REGISTRY_KEYS.X_KEY]
         kl_divergence_z = kl_divergence(
@@ -616,6 +616,14 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         else:
             kl_divergence_l = torch.zeros_like(kl_divergence_z)
 
+        kl_divergence_b = None
+        if MODULE_KEYS.QBM_KEY in generative_outputs:
+            qb_loc = generative_outputs[MODULE_KEYS.QBM_KEY]
+            qb_var = generative_outputs[MODULE_KEYS.QBV_KEY]
+            qb = Normal(qb_loc, qb_var.sqrt())
+            pb = Normal(torch.zeros_like(qb_loc), torch.ones_like(qb_loc))
+            kl_divergence_b = kl_divergence(qb, pb).sum()
+
         reconst_loss = -generative_outputs[MODULE_KEYS.PX_KEY].log_prob(x).sum(-1)
 
         kl_local_for_warmup = kl_divergence_z
@@ -624,6 +632,8 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
 
         loss = torch.mean(reconst_loss + weighted_kl_local)
+        if kl_divergence_b is not None:
+            loss = loss + kl_divergence_b / x.size(0)
 
         # a payload to be used during autotune
         if self.extra_payload_autotune:
@@ -642,6 +652,7 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
                 MODULE_KEYS.KL_L_KEY: kl_divergence_l,
                 MODULE_KEYS.KL_Z_KEY: kl_divergence_z,
             },
+            kl_global=kl_divergence_b,
             extra_metrics=extra_metrics_payload,
         )
 

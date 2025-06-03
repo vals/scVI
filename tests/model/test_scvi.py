@@ -1336,3 +1336,4 @@ def test_variational_batch_representation():
     model.train(max_epochs=1, train_size=0.5)
     rep = model.get_batch_representation()
     assert rep.shape == (adata.n_obs, model.module.n_latent)
+    assert "kl_global_train" in model.history
