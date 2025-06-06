@@ -139,7 +139,12 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         Additional keyword arguments passed into :class:`~scvi.nn.DecoderSCVI`.
     batch_embedding_kwargs
         Keyword arguments passed into :class:`~scvi.nn.Embedding` if ``batch_representation`` is
-        set to ``"embedding"``.
+        set to ``"embedding"``. For ``batch_representation="variational"``, supports:
+        
+        * ``embedding_dim``: Latent dimensionality (default: ``5``)
+        * ``n_layers``: Number of layers (default: ``n_layers``)
+        * ``n_hidden``: Hidden layer size (default: ``n_hidden``)
+        * ``dropout_rate``: Dropout rate (default: ``dropout_rate``)
 
     Notes
     -----
@@ -232,13 +237,20 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
                     "`pseudobulk_counts` must be provided when using variational "
                     "batch representation."
                 )
+            # Extract batch encoder parameters from batch_embedding_kwargs
+            batch_kwargs = batch_embedding_kwargs or {}
+            batch_latent_dim = batch_kwargs.get("embedding_dim", 5)
+            batch_n_layers = batch_kwargs.get("n_layers", n_layers)
+            batch_n_hidden = batch_kwargs.get("n_hidden", n_hidden)
+            batch_dropout = batch_kwargs.get("dropout_rate", dropout_rate)
+            
             self.register_buffer("pseudobulk_counts", torch.as_tensor(pseudobulk_counts).float())
             self.batch_encoder = Encoder(
                 n_input,
-                n_latent,
-                n_layers=n_layers,
-                n_hidden=n_hidden,
-                dropout_rate=dropout_rate,
+                batch_latent_dim,
+                n_layers=batch_n_layers,
+                n_hidden=batch_n_hidden,
+                dropout_rate=batch_dropout,
                 distribution="normal",
                 inject_covariates=False,
                 use_batch_norm=use_batch_norm_encoder,
@@ -246,7 +258,7 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
                 var_activation=var_activation,
                 return_dist=True,
             )
-            batch_dim = n_latent
+            batch_dim = batch_latent_dim
         elif self.batch_representation != "one-hot":
             raise ValueError(
                 "`batch_representation` must be one of 'one-hot', 'embedding', 'variational'."
