@@ -222,18 +222,10 @@ class SCVI(
                 n_labels=self.summary_stats.n_labels,
                 n_continuous_cov=self.summary_stats.get("n_extra_continuous_covs", 0),
                 n_cats_per_cov=n_cats_per_cov,
-                n_hidden=n_hidden,
-                n_latent=n_latent,
-                n_layers=n_layers,
-                dropout_rate=dropout_rate,
-                dispersion=dispersion,
-                gene_likelihood=gene_likelihood,
-                use_observed_lib_size=use_observed_lib_size,
-                latent_distribution=latent_distribution,
                 use_size_factor_key=use_size_factor_key,
                 library_log_means=library_log_means,
                 library_log_vars=library_log_vars,
-                **kwargs,
+                **self._module_kwargs,
             )
             self.module.minified_data_type = self.minified_data_type
 
