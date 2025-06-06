@@ -393,11 +393,16 @@ def make_pseudobulk_batches(adata: AnnData, batch_key: str) -> AnnData:
         idx = batch_categories == cat
         x = adata[idx].X
         counts = x.sum(axis=0)
+        # Always ensure we get ndarray, not matrix
         if sp_sparse.issparse(counts):
+            counts = np.asarray(counts).ravel()
+        else:
             counts = np.asarray(counts).ravel()
         pb_data.append(counts)
 
     pb_data = np.stack(pb_data, axis=0)
-    pb_adata = AnnData(pb_data, obs=pd.DataFrame({batch_key: uniq}))
+    # Ensure proper string index for obs DataFrame
+    obs_df = pd.DataFrame({batch_key: uniq.astype(str)}, index=uniq.astype(str))
+    pb_adata = AnnData(pb_data, obs=obs_df)
     pb_adata.var_names = adata.var_names.copy()
     return pb_adata

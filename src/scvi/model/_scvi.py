@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import warnings
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import scipy.sparse as sp_sparse
@@ -127,6 +127,7 @@ class SCVI(
         gene_likelihood: Literal["zinb", "nb", "poisson", "normal"] = "zinb",
         use_observed_lib_size: bool = True,
         latent_distribution: Literal["normal", "ln"] = "normal",
+        batch_representation: Literal["one-hot", "embedding", "variational"] = "one-hot",
         pseudobulk_adata: AnnData | None = None,
         compute_pseudobulk: bool = False,
         **kwargs,
@@ -141,13 +142,15 @@ class SCVI(
             "dispersion": dispersion,
             "gene_likelihood": gene_likelihood,
             "latent_distribution": latent_distribution,
+            "batch_representation": batch_representation,
             **kwargs,
         }
         self._model_summary_string = (
             "SCVI model with the following parameters: \n"
             f"n_hidden: {n_hidden}, n_latent: {n_latent}, n_layers: {n_layers}, "
             f"dropout_rate: {dropout_rate}, dispersion: {dispersion}, "
-            f"gene_likelihood: {gene_likelihood}, latent_distribution: {latent_distribution}."
+            f"gene_likelihood: {gene_likelihood}, latent_distribution: {latent_distribution}, "
+            f"batch_representation: {batch_representation}."
         )
 
         if self._module_init_on_train:
