@@ -1335,5 +1335,38 @@ def test_variational_batch_representation():
     )
     model.train(max_epochs=1, train_size=0.5)
     rep = model.get_batch_representation()
-    assert rep.shape == (adata.n_obs, model.module.n_latent)
+    assert rep.shape == (adata.n_obs, model.module.batch_encoder.n_latent)
     assert "kl_global_train" in model.history
+
+
+def test_variational_batch_unseen_batches():
+    """Test that variational batch representation can handle unseen batches."""
+    # Create training data with batches 0, 1
+    adata_train = synthetic_iid(n_batches=2)
+    SCVI.setup_anndata(adata_train, batch_key="batch")
+    
+    model = SCVI(
+        adata_train,
+        batch_representation="variational",
+        compute_pseudobulk=True,
+    )
+    model.train(max_epochs=1, train_size=0.5)
+    
+    # Create test data with new batches 2, 3
+    adata_test = synthetic_iid(n_batches=2)
+    # Manually set batch names to new values
+    adata_test.obs["batch"] = adata_test.obs["batch"].cat.rename_categories(["batch_2", "batch_3"])
+    
+    # Test that we can get batch representations for unseen batches
+    # This should work because variational approach encodes pseudobulk directly
+    rep = model.get_batch_representation(adata_test)
+    # The batch encoder outputs batch_latent_dim (default 5)
+    expected_batch_dim = 5  # Default embedding_dim from batch_embedding_kwargs
+    assert rep.shape == (adata_test.n_obs, expected_batch_dim)
+    
+    # Test that representations are different for different batches
+    batch_2_rep = rep[adata_test.obs["batch"] == "batch_2"]
+    batch_3_rep = rep[adata_test.obs["batch"] == "batch_3"]
+    
+    # Check that batch representations differ (allowing for some tolerance)
+    assert not np.allclose(batch_2_rep.mean(axis=0), batch_3_rep.mean(axis=0), atol=0.1)

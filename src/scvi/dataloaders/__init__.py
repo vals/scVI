@@ -11,6 +11,7 @@ from ._data_splitting import (
 )
 from ._samplers import BatchDistributedSampler
 from ._semi_dataloader import SemiSupervisedDataLoader
+from ._variational_batch_dataloader import VariationalBatchDataLoader
 
 __all__ = [
     "AnnDataLoader",
@@ -23,4 +24,5 @@ __all__ = [
     "BatchDistributedSampler",
     "MappedCollectionDataModule",
     "TileDBDataModule",
+    "VariationalBatchDataLoader",
 ]

@@ -232,11 +232,6 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
             self.init_embedding(REGISTRY_KEYS.BATCH_KEY, n_batch, **(batch_embedding_kwargs or {}))
             batch_dim = self.get_embedding(REGISTRY_KEYS.BATCH_KEY).embedding_dim
         elif self.batch_representation == "variational":
-            if pseudobulk_counts is None:
-                raise ValueError(
-                    "`pseudobulk_counts` must be provided when using variational "
-                    "batch representation."
-                )
             # Extract batch encoder parameters from batch_embedding_kwargs
             batch_kwargs = batch_embedding_kwargs or {}
             batch_latent_dim = batch_kwargs.get("embedding_dim", 5)
@@ -244,7 +239,7 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
             batch_n_hidden = batch_kwargs.get("n_hidden", n_hidden)
             batch_dropout = batch_kwargs.get("dropout_rate", dropout_rate)
             
-            self.register_buffer("pseudobulk_counts", torch.as_tensor(pseudobulk_counts).float())
+            # Note: pseudobulk_counts will be provided by dataloader during forward pass
             self.batch_encoder = Encoder(
                 n_input,
                 batch_latent_dim,
@@ -535,9 +530,24 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
             )
             qb_loc = qb_var = batch_latent = None
         elif self.batch_representation == "variational":
-            qb, _ = self.batch_encoder(self.pseudobulk_counts)
-            batch_latent = self.batch_encoder.z_transformation(qb.rsample())
-            batch_rep = batch_latent[batch_index.squeeze(-1)]
+            # Encode pseudobulk data provided by dataloader
+            if "pseudobulk_counts" in tensors:
+                pseudobulk_data = tensors["pseudobulk_counts"]
+                unique_batch_indices = tensors["unique_batch_indices"]
+                
+                qb, _ = self.batch_encoder(pseudobulk_data)
+                batch_latent = self.batch_encoder.z_transformation(qb.rsample())
+                
+                # Map batch indices to their position in unique_batch_indices
+                batch_mapping = torch.searchsorted(unique_batch_indices, batch_index.squeeze(-1))
+                batch_rep = batch_latent[batch_mapping]
+            else:
+                # Fallback for inference without pseudobulk data
+                raise ValueError(
+                    "Pseudobulk data not provided. Use VariationalBatchDataLoader or "
+                    "provide pseudobulk_counts in tensors."
+                )
+            
             decoder_input = torch.cat([decoder_input, batch_rep], dim=-1)
             px_scale, px_r, px_rate, px_dropout = self.decoder(
                 self.dispersion,

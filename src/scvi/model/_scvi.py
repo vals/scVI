@@ -208,13 +208,9 @@ class SCVI(
                         "original_key"
                     ]
                     pseudobulk_adata = make_pseudobulk_batches(self.adata, batch_key)
-                if pseudobulk_adata is not None:
-                    pb_counts = pseudobulk_adata.X
-                    if sp_sparse.issparse(pb_counts):
-                        pb_counts = pb_counts.A
-                    self._module_kwargs["pseudobulk_counts"] = np.asarray(
-                        pb_counts, dtype=np.float32
-                    )
+                
+                # Store pseudobulk data for creating dataloaders, not for module
+                self._pseudobulk_adata = pseudobulk_adata
 
             self.module = self._module_cls(
                 n_input=self.summary_stats.n_vars,
@@ -230,6 +226,39 @@ class SCVI(
             self.module.minified_data_type = self.minified_data_type
 
         self.init_params_ = self._get_init_params(locals())
+
+    def _make_data_loader(
+        self,
+        adata: AnnData,
+        indices: list[int] | None = None,
+        batch_size: int | None = None,
+        shuffle: bool = False,
+        **data_loader_kwargs,
+    ):
+        """Create data loader, using VariationalBatchDataLoader for variational batch representation."""
+        if getattr(self.module, "batch_representation", None) == "variational":
+            from scvi.dataloaders._variational_batch_dataloader import VariationalBatchDataLoader
+            
+            batch_key = self.adata_manager.get_state_registry(REGISTRY_KEYS.BATCH_KEY)["original_key"]
+            
+            return VariationalBatchDataLoader(
+                self.adata_manager,
+                pseudobulk_adata=getattr(self, "_pseudobulk_adata", None),
+                batch_key=batch_key,
+                indices=indices,
+                batch_size=batch_size or 128,
+                shuffle=shuffle,
+                **data_loader_kwargs,
+            )
+        else:
+            # Use default dataloader for other batch representations
+            return super()._make_data_loader(
+                adata=adata,
+                indices=indices,
+                batch_size=batch_size,
+                shuffle=shuffle,
+                **data_loader_kwargs,
+            )
 
     @classmethod
     @setup_anndata_dsp.dedent
