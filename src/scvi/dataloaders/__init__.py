@@ -9,6 +9,7 @@ from ._data_splitting import (
     DeviceBackedDataSplitter,
     SemiSupervisedDataSplitter,
 )
+from ._variational_data_splitter import VariationalDataSplitter
 from ._samplers import BatchDistributedSampler
 from ._semi_dataloader import SemiSupervisedDataLoader
 from ._variational_batch_dataloader import VariationalBatchDataLoader
@@ -21,6 +22,7 @@ __all__ = [
     "SemiSupervisedDataLoader",
     "DataSplitter",
     "SemiSupervisedDataSplitter",
+    "VariationalDataSplitter",
     "BatchDistributedSampler",
     "MappedCollectionDataModule",
     "TileDBDataModule",

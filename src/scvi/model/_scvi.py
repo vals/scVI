@@ -20,6 +20,7 @@ from scvi.data.fields import (
 )
 from scvi.model._utils import _init_library_size
 from scvi.model.base import EmbeddingMixin, UnsupervisedTrainingMixin
+from scvi.dataloaders._variational_data_splitter import VariationalDataSplitter
 from scvi.module import VAE
 from scvi.utils import setup_anndata_dsp
 
@@ -259,6 +260,19 @@ class SCVI(
                 shuffle=shuffle,
                 **data_loader_kwargs,
             )
+
+    # Override data splitter for variational batch representation
+    _data_splitter_cls = VariationalDataSplitter
+    
+    def train(self, **kwargs):
+        """Override training to pass model reference to data splitter."""
+        # Add model reference to datasplitter_kwargs if not already provided
+        datasplitter_kwargs = kwargs.get('datasplitter_kwargs', {})
+        if 'model' not in datasplitter_kwargs:
+            datasplitter_kwargs['model'] = self
+            kwargs['datasplitter_kwargs'] = datasplitter_kwargs
+        
+        return super().train(**kwargs)
 
     @classmethod
     @setup_anndata_dsp.dedent
