@@ -356,7 +356,7 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         if size_factor is not None:
             size_factor = torch.log(size_factor)
 
-        return {
+        generative_inputs = {
             MODULE_KEYS.Z_KEY: inference_outputs[MODULE_KEYS.Z_KEY],
             MODULE_KEYS.LIBRARY_KEY: inference_outputs[MODULE_KEYS.LIBRARY_KEY],
             MODULE_KEYS.BATCH_INDEX_KEY: tensors[REGISTRY_KEYS.BATCH_KEY],
@@ -365,6 +365,13 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
             MODULE_KEYS.CAT_COVS_KEY: tensors.get(REGISTRY_KEYS.CAT_COVS_KEY, None),
             MODULE_KEYS.SIZE_FACTOR_KEY: size_factor,
         }
+        
+        # Add pseudobulk data for variational batch representation
+        if "pseudobulk_counts" in tensors:
+            generative_inputs["pseudobulk_counts"] = tensors["pseudobulk_counts"]
+            generative_inputs["unique_batch_indices"] = tensors["unique_batch_indices"]
+            
+        return generative_inputs
 
     def _compute_local_library_params(
         self,
@@ -392,13 +399,25 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
     @auto_move_data
     def _regular_inference(
         self,
-        x: torch.Tensor,
-        batch_index: torch.Tensor,
+        x: torch.Tensor = None,
+        batch_index: torch.Tensor = None,
         cont_covs: torch.Tensor | None = None,
         cat_covs: torch.Tensor | None = None,
         n_samples: int = 1,
+        **kwargs,
     ) -> dict[str, torch.Tensor | Distribution | None]:
         """Run the regular inference process."""
+        # Handle case where arguments come from MODULE_KEYS
+        from scvi.module._constants import MODULE_KEYS
+        if x is None and MODULE_KEYS.X_KEY in kwargs:
+            x = kwargs[MODULE_KEYS.X_KEY]
+        if batch_index is None and MODULE_KEYS.BATCH_INDEX_KEY in kwargs:
+            batch_index = kwargs[MODULE_KEYS.BATCH_INDEX_KEY]
+        if cont_covs is None and MODULE_KEYS.CONT_COVS_KEY in kwargs:
+            cont_covs = kwargs[MODULE_KEYS.CONT_COVS_KEY]
+        if cat_covs is None and MODULE_KEYS.CAT_COVS_KEY in kwargs:
+            cat_covs = kwargs[MODULE_KEYS.CAT_COVS_KEY]
+            
         x_ = x
         if self.use_observed_lib_size:
             library = torch.log(x.sum(1)).unsqueeze(1)
@@ -485,6 +504,9 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         size_factor: torch.Tensor | None = None,
         y: torch.Tensor | None = None,
         transform_batch: torch.Tensor | None = None,
+        pseudobulk_counts: torch.Tensor | None = None,
+        unique_batch_indices: torch.Tensor | None = None,
+        **kwargs,
     ) -> dict[str, Distribution | None]:
         """Run the generative process."""
         from torch.nn.functional import linear
@@ -531,9 +553,8 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
             qb_loc = qb_var = batch_latent = None
         elif self.batch_representation == "variational":
             # Encode pseudobulk data provided by dataloader
-            if "pseudobulk_counts" in tensors:
-                pseudobulk_data = tensors["pseudobulk_counts"]
-                unique_batch_indices = tensors["unique_batch_indices"]
+            if pseudobulk_counts is not None:
+                pseudobulk_data = pseudobulk_counts
                 
                 qb, _ = self.batch_encoder(pseudobulk_data)
                 batch_latent = self.batch_encoder.z_transformation(qb.rsample())
