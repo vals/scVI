@@ -31,6 +31,7 @@ from ._preprocessing import (
     reads_to_fragments,
 )
 from ._read import read_10x_atac, read_10x_multiome
+from ._utils import make_pseudobulk_batches
 
 __all__ = [
     "AnnTorchDataset",
@@ -65,4 +66,5 @@ __all__ = [
     "add_dna_sequence",
     "reads_to_fragments",
     "cellxgene",
+    "make_pseudobulk_batches",
 ]

@@ -139,7 +139,12 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         Additional keyword arguments passed into :class:`~scvi.nn.DecoderSCVI`.
     batch_embedding_kwargs
         Keyword arguments passed into :class:`~scvi.nn.Embedding` if ``batch_representation`` is
-        set to ``"embedding"``.
+        set to ``"embedding"``. For ``batch_representation="variational"``, supports:
+        
+        * ``embedding_dim``: Latent dimensionality (default: ``5``)
+        * ``n_layers``: Number of layers (default: ``n_layers``)
+        * ``n_hidden``: Hidden layer size (default: ``n_hidden``)
+        * ``dropout_rate``: Dropout rate (default: ``dropout_rate``)
 
     Notes
     -----
@@ -163,7 +168,8 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         latent_distribution: Literal["normal", "ln"] = "normal",
         encode_covariates: bool = False,
         deeply_inject_covariates: bool = True,
-        batch_representation: Literal["one-hot", "embedding"] = "one-hot",
+        batch_representation: Literal["one-hot", "embedding", "variational"] = "one-hot",
+        pseudobulk_counts: np.ndarray | None = None,
         use_batch_norm: Literal["encoder", "decoder", "none", "both"] = "both",
         use_layer_norm: Literal["encoder", "decoder", "none", "both"] = "none",
         use_size_factor_key: bool = False,
@@ -216,16 +222,42 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
             )
 
         self.batch_representation = batch_representation
-        if self.batch_representation == "embedding":
-            self.init_embedding(REGISTRY_KEYS.BATCH_KEY, n_batch, **(batch_embedding_kwargs or {}))
-            batch_dim = self.get_embedding(REGISTRY_KEYS.BATCH_KEY).embedding_dim
-        elif self.batch_representation != "one-hot":
-            raise ValueError("`batch_representation` must be one of 'one-hot', 'embedding'.")
 
         use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
         use_batch_norm_decoder = use_batch_norm == "decoder" or use_batch_norm == "both"
         use_layer_norm_encoder = use_layer_norm == "encoder" or use_layer_norm == "both"
         use_layer_norm_decoder = use_layer_norm == "decoder" or use_layer_norm == "both"
+
+        if self.batch_representation == "embedding":
+            self.init_embedding(REGISTRY_KEYS.BATCH_KEY, n_batch, **(batch_embedding_kwargs or {}))
+            batch_dim = self.get_embedding(REGISTRY_KEYS.BATCH_KEY).embedding_dim
+        elif self.batch_representation == "variational":
+            # Extract batch encoder parameters from batch_embedding_kwargs
+            batch_kwargs = batch_embedding_kwargs or {}
+            batch_latent_dim = batch_kwargs.get("embedding_dim", 5)
+            batch_n_layers = batch_kwargs.get("n_layers", n_layers)
+            batch_n_hidden = batch_kwargs.get("n_hidden", n_hidden)
+            batch_dropout = batch_kwargs.get("dropout_rate", dropout_rate)
+            
+            # Note: pseudobulk_counts will be provided by dataloader during forward pass
+            self.batch_encoder = Encoder(
+                n_input,
+                batch_latent_dim,
+                n_layers=batch_n_layers,
+                n_hidden=batch_n_hidden,
+                dropout_rate=batch_dropout,
+                distribution="normal",
+                inject_covariates=False,
+                use_batch_norm=use_batch_norm_encoder,
+                use_layer_norm=use_layer_norm_encoder,
+                var_activation=var_activation,
+                return_dist=True,
+            )
+            batch_dim = batch_latent_dim
+        elif self.batch_representation != "one-hot":
+            raise ValueError(
+                "`batch_representation` must be one of 'one-hot', 'embedding', 'variational'."
+            )
 
         n_input_encoder = n_input + n_continuous_cov * encode_covariates
         if self.batch_representation == "embedding":
@@ -267,7 +299,7 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
             **_extra_encoder_kwargs,
         )
         n_input_decoder = n_latent + n_continuous_cov
-        if self.batch_representation == "embedding":
+        if self.batch_representation in {"embedding", "variational"}:
             n_input_decoder += batch_dim
 
         _extra_decoder_kwargs = extra_decoder_kwargs or {}
@@ -324,7 +356,7 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         if size_factor is not None:
             size_factor = torch.log(size_factor)
 
-        return {
+        generative_inputs = {
             MODULE_KEYS.Z_KEY: inference_outputs[MODULE_KEYS.Z_KEY],
             MODULE_KEYS.LIBRARY_KEY: inference_outputs[MODULE_KEYS.LIBRARY_KEY],
             MODULE_KEYS.BATCH_INDEX_KEY: tensors[REGISTRY_KEYS.BATCH_KEY],
@@ -333,6 +365,13 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
             MODULE_KEYS.CAT_COVS_KEY: tensors.get(REGISTRY_KEYS.CAT_COVS_KEY, None),
             MODULE_KEYS.SIZE_FACTOR_KEY: size_factor,
         }
+        
+        # Add pseudobulk data for variational batch representation
+        if "pseudobulk_counts" in tensors:
+            generative_inputs["pseudobulk_counts"] = tensors["pseudobulk_counts"]
+            generative_inputs["unique_batch_indices"] = tensors["unique_batch_indices"]
+            
+        return generative_inputs
 
     def _compute_local_library_params(
         self,
@@ -360,13 +399,25 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
     @auto_move_data
     def _regular_inference(
         self,
-        x: torch.Tensor,
-        batch_index: torch.Tensor,
+        x: torch.Tensor = None,
+        batch_index: torch.Tensor = None,
         cont_covs: torch.Tensor | None = None,
         cat_covs: torch.Tensor | None = None,
         n_samples: int = 1,
+        **kwargs,
     ) -> dict[str, torch.Tensor | Distribution | None]:
         """Run the regular inference process."""
+        # Handle case where arguments come from MODULE_KEYS
+        from scvi.module._constants import MODULE_KEYS
+        if x is None and MODULE_KEYS.X_KEY in kwargs:
+            x = kwargs[MODULE_KEYS.X_KEY]
+        if batch_index is None and MODULE_KEYS.BATCH_INDEX_KEY in kwargs:
+            batch_index = kwargs[MODULE_KEYS.BATCH_INDEX_KEY]
+        if cont_covs is None and MODULE_KEYS.CONT_COVS_KEY in kwargs:
+            cont_covs = kwargs[MODULE_KEYS.CONT_COVS_KEY]
+        if cat_covs is None and MODULE_KEYS.CAT_COVS_KEY in kwargs:
+            cat_covs = kwargs[MODULE_KEYS.CAT_COVS_KEY]
+            
         x_ = x
         if self.use_observed_lib_size:
             library = torch.log(x.sum(1)).unsqueeze(1)
@@ -453,6 +504,9 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         size_factor: torch.Tensor | None = None,
         y: torch.Tensor | None = None,
         transform_batch: torch.Tensor | None = None,
+        pseudobulk_counts: torch.Tensor | None = None,
+        unique_batch_indices: torch.Tensor | None = None,
+        **kwargs,
     ) -> dict[str, Distribution | None]:
         """Run the generative process."""
         from torch.nn.functional import linear
@@ -496,6 +550,35 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
                 *categorical_input,
                 y,
             )
+            qb_loc = qb_var = batch_latent = None
+        elif self.batch_representation == "variational":
+            # Encode pseudobulk data provided by dataloader
+            if pseudobulk_counts is not None:
+                pseudobulk_data = pseudobulk_counts
+                
+                qb, _ = self.batch_encoder(pseudobulk_data)
+                batch_latent = self.batch_encoder.z_transformation(qb.rsample())
+                
+                # Map batch indices to their position in unique_batch_indices
+                batch_mapping = torch.searchsorted(unique_batch_indices, batch_index.squeeze(-1))
+                batch_rep = batch_latent[batch_mapping]
+            else:
+                # Fallback for inference without pseudobulk data
+                raise ValueError(
+                    "Pseudobulk data not provided. Use VariationalBatchDataLoader or "
+                    "provide pseudobulk_counts in tensors."
+                )
+            
+            decoder_input = torch.cat([decoder_input, batch_rep], dim=-1)
+            px_scale, px_r, px_rate, px_dropout = self.decoder(
+                self.dispersion,
+                decoder_input,
+                size_factor,
+                *categorical_input,
+                y,
+            )
+            qb_loc = qb.loc
+            qb_var = qb.scale**2
         else:
             px_scale, px_r, px_rate, px_dropout = self.decoder(
                 self.dispersion,
@@ -505,6 +588,7 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
                 *categorical_input,
                 y,
             )
+            qb_loc = qb_var = batch_latent = None
 
         if self.dispersion == "gene-label":
             px_r = linear(
@@ -542,11 +626,16 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
             pl = Normal(local_library_log_means, local_library_log_vars.sqrt())
         pz = Normal(torch.zeros_like(z), torch.ones_like(z))
 
-        return {
+        out = {
             MODULE_KEYS.PX_KEY: px,
             MODULE_KEYS.PL_KEY: pl,
             MODULE_KEYS.PZ_KEY: pz,
         }
+        if qb_loc is not None:
+            out[MODULE_KEYS.QBM_KEY] = qb_loc
+            out[MODULE_KEYS.QBV_KEY] = qb_var
+            out[MODULE_KEYS.BATCH_EMBED_KEY] = batch_latent
+        return out
 
     @unsupported_if_adata_minified
     def loss(
@@ -557,7 +646,7 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         kl_weight: torch.tensor | float = 1.0,
     ) -> LossOutput:
         """Compute the loss."""
-        from torch.distributions import kl_divergence
+        from torch.distributions import Normal, kl_divergence
 
         x = tensors[REGISTRY_KEYS.X_KEY]
         kl_divergence_z = kl_divergence(
@@ -570,6 +659,14 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         else:
             kl_divergence_l = torch.zeros_like(kl_divergence_z)
 
+        kl_divergence_b = None
+        if MODULE_KEYS.QBM_KEY in generative_outputs:
+            qb_loc = generative_outputs[MODULE_KEYS.QBM_KEY]
+            qb_var = generative_outputs[MODULE_KEYS.QBV_KEY]
+            qb = Normal(qb_loc, qb_var.sqrt())
+            pb = Normal(torch.zeros_like(qb_loc), torch.ones_like(qb_loc))
+            kl_divergence_b = kl_divergence(qb, pb).sum()
+
         reconst_loss = -generative_outputs[MODULE_KEYS.PX_KEY].log_prob(x).sum(-1)
 
         kl_local_for_warmup = kl_divergence_z
@@ -578,6 +675,8 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
 
         loss = torch.mean(reconst_loss + weighted_kl_local)
+        if kl_divergence_b is not None:
+            loss = loss + kl_divergence_b / x.size(0)
 
         # a payload to be used during autotune
         if self.extra_payload_autotune:
@@ -596,6 +695,7 @@ class VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
                 MODULE_KEYS.KL_L_KEY: kl_divergence_l,
                 MODULE_KEYS.KL_Z_KEY: kl_divergence_z,
             },
+            kl_global=kl_divergence_b,
             extra_metrics=extra_metrics_payload,
         )
 

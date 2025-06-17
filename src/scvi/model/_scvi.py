@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import logging
 import warnings
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
+
+import numpy as np
+import scipy.sparse as sp_sparse
 
 from scvi import REGISTRY_KEYS, settings
 from scvi.data import AnnDataManager
 from scvi.data._constants import ADATA_MINIFY_TYPE
-from scvi.data._utils import _get_adata_minify_type
+from scvi.data._utils import _get_adata_minify_type, make_pseudobulk_batches
 from scvi.data.fields import (
     CategoricalJointObsField,
     CategoricalObsField,
@@ -17,6 +20,7 @@ from scvi.data.fields import (
 )
 from scvi.model._utils import _init_library_size
 from scvi.model.base import EmbeddingMixin, UnsupervisedTrainingMixin
+from scvi.dataloaders._variational_data_splitter import VariationalDataSplitter
 from scvi.module import VAE
 from scvi.utils import setup_anndata_dsp
 
@@ -124,6 +128,9 @@ class SCVI(
         gene_likelihood: Literal["zinb", "nb", "poisson", "normal"] = "zinb",
         use_observed_lib_size: bool = True,
         latent_distribution: Literal["normal", "ln"] = "normal",
+        batch_representation: Literal["one-hot", "embedding", "variational"] = "one-hot",
+        pseudobulk_adata: AnnData | None = None,
+        compute_pseudobulk: bool = False,
         **kwargs,
     ):
         super().__init__(adata, registry)
@@ -136,13 +143,15 @@ class SCVI(
             "dispersion": dispersion,
             "gene_likelihood": gene_likelihood,
             "latent_distribution": latent_distribution,
+            "batch_representation": batch_representation,
             **kwargs,
         }
         self._model_summary_string = (
             "SCVI model with the following parameters: \n"
             f"n_hidden: {n_hidden}, n_latent: {n_latent}, n_layers: {n_layers}, "
             f"dropout_rate: {dropout_rate}, dispersion: {dispersion}, "
-            f"gene_likelihood: {gene_likelihood}, latent_distribution: {latent_distribution}."
+            f"gene_likelihood: {gene_likelihood}, latent_distribution: {latent_distribution}, "
+            f"batch_representation: {batch_representation}."
         )
 
         if self._module_init_on_train:
@@ -193,28 +202,77 @@ class SCVI(
                 library_log_means, library_log_vars = _init_library_size(
                     self.adata_manager, n_batch
                 )
+
+            if self._module_kwargs.get("batch_representation") == "variational":
+                if pseudobulk_adata is None and compute_pseudobulk:
+                    batch_key = self.adata_manager.get_state_registry(REGISTRY_KEYS.BATCH_KEY)[
+                        "original_key"
+                    ]
+                    pseudobulk_adata = make_pseudobulk_batches(self.adata, batch_key)
+                
+                # Store pseudobulk data for creating dataloaders, not for module
+                self._pseudobulk_adata = pseudobulk_adata
+
             self.module = self._module_cls(
                 n_input=self.summary_stats.n_vars,
                 n_batch=n_batch,
                 n_labels=self.summary_stats.n_labels,
                 n_continuous_cov=self.summary_stats.get("n_extra_continuous_covs", 0),
                 n_cats_per_cov=n_cats_per_cov,
-                n_hidden=n_hidden,
-                n_latent=n_latent,
-                n_layers=n_layers,
-                dropout_rate=dropout_rate,
-                dispersion=dispersion,
-                gene_likelihood=gene_likelihood,
-                use_observed_lib_size=use_observed_lib_size,
-                latent_distribution=latent_distribution,
                 use_size_factor_key=use_size_factor_key,
                 library_log_means=library_log_means,
                 library_log_vars=library_log_vars,
-                **kwargs,
+                **self._module_kwargs,
             )
             self.module.minified_data_type = self.minified_data_type
 
         self.init_params_ = self._get_init_params(locals())
+
+    def _make_data_loader(
+        self,
+        adata: AnnData,
+        indices: list[int] | None = None,
+        batch_size: int | None = None,
+        shuffle: bool = False,
+        **data_loader_kwargs,
+    ):
+        """Create data loader, using VariationalBatchDataLoader for variational batch representation."""
+        if getattr(self.module, "batch_representation", None) == "variational":
+            from scvi.dataloaders._variational_batch_dataloader import VariationalBatchDataLoader
+            
+            batch_key = self.adata_manager.get_state_registry(REGISTRY_KEYS.BATCH_KEY)["original_key"]
+            
+            return VariationalBatchDataLoader(
+                self.adata_manager,
+                pseudobulk_adata=getattr(self, "_pseudobulk_adata", None),
+                batch_key=batch_key,
+                indices=indices,
+                batch_size=batch_size or 128,
+                shuffle=shuffle,
+                **data_loader_kwargs,
+            )
+        else:
+            # Use default dataloader for other batch representations
+            return super()._make_data_loader(
+                adata=adata,
+                indices=indices,
+                batch_size=batch_size,
+                shuffle=shuffle,
+                **data_loader_kwargs,
+            )
+
+    # Override data splitter for variational batch representation
+    _data_splitter_cls = VariationalDataSplitter
+    
+    def train(self, **kwargs):
+        """Override training to pass model reference to data splitter."""
+        # Add model reference to datasplitter_kwargs if not already provided
+        datasplitter_kwargs = kwargs.get('datasplitter_kwargs', {})
+        if 'model' not in datasplitter_kwargs:
+            datasplitter_kwargs['model'] = self
+            kwargs['datasplitter_kwargs'] = datasplitter_kwargs
+        
+        return super().train(**kwargs)
 
     @classmethod
     @setup_anndata_dsp.dedent

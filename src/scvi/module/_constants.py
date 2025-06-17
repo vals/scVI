@@ -8,6 +8,9 @@ class _MODULE_KEYS(NamedTuple):
     QZ_KEY: str = "qz"
     QZM_KEY: str = "qzm"
     QZV_KEY: str = "qzv"
+    QBM_KEY: str = "qbm"
+    QBV_KEY: str = "qbv"
+    BATCH_EMBED_KEY: str = "batch_embedding"
     LIBRARY_KEY: str = "library"
     QL_KEY: str = "ql"
     BATCH_INDEX_KEY: str = "batch_index"
@@ -22,6 +25,7 @@ class _MODULE_KEYS(NamedTuple):
     # loss
     KL_L_KEY: str = "kl_divergence_l"
     KL_Z_KEY: str = "kl_divergence_z"
+    KL_B_KEY: str = "kl_divergence_b"
 
 
 MODULE_KEYS = _MODULE_KEYS()
