@@ -8,7 +8,11 @@ from ._amortizedlda import AmortizedLDA
 from ._autozi import AUTOZI
 from ._condscvi import CondSCVI
 from ._destvi import DestVI
+from ._deterministic_thinned_scvi import DeterministicThinnedSCVI
+from ._joint_embedding_scvi import JointEmbeddingSCVI
 from ._linear_scvi import LinearSCVI
+from ._nonzero_scvi import NonZeroSCVI
+from ._thinned_scvi import ThinnedSCVI
 from ._multivi import MULTIVI
 from ._peakvi import PEAKVI
 from ._scanvi import SCANVI
@@ -26,6 +30,10 @@ __all__ = [
     "DestVI",
     "MULTIVI",
     "AmortizedLDA",
+    "DeterministicThinnedSCVI",
+    "JointEmbeddingSCVI",
+    "NonZeroSCVI",
+    "ThinnedSCVI",
     "utils",
 ]
 
